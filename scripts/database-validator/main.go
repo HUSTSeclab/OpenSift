@@ -3,9 +3,9 @@ package main
 import (
 	"log"
 
-	"github.com/HUSTSecLab/OpenSift/cmd/database-validator/internal/checkvalid"
 	"github.com/HUSTSecLab/OpenSift/pkg/config"
 	"github.com/HUSTSecLab/OpenSift/pkg/storage"
+	"github.com/HUSTSecLab/OpenSift/scripts/database-validator/internal/checkvalid"
 	"github.com/spf13/pflag"
 )
 
