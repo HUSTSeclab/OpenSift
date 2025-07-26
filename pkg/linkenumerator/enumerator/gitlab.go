@@ -25,7 +25,6 @@ func NewGitlabEnumerator(take int, jobs int) Enumerator {
 	}
 }
 
-// Todo Use channel to receive and write data
 func (c *gitlabEnumerator) Enumerate() error {
 	if err := c.writer.Open(); err != nil {
 		return err
@@ -67,22 +66,24 @@ func (c *gitlabEnumerator) Enumerate() error {
 			}
 
 			for _, v := range *resp {
-				// if ends with .git, remove it
 				if strings.HasSuffix(v.HTTPURLToRepo, ".git") {
 					v.HTTPURLToRepo = v.HTTPURLToRepo[:len(v.HTTPURLToRepo)-4]
 				}
+				c.writer.Write(v.Name)
 				c.writer.Write(v.HTTPURLToRepo)
+				c.writer.Write(fmt.Sprintf("%d", v.StarCount))
+				c.writer.Write("\n")
 			}
 
 			func() {
 				muCollected.Lock()
 				defer muCollected.Unlock()
 				collected += len(*resp)
-				logrus.Infof("Enumerator has collected and written %d repositories", collected)
 			}()
 
 		})
 	}
 	wg.Wait()
+	logrus.Infof("Enumerator has collected and written %d repositories", collected)
 	return nil
 }

@@ -2,61 +2,92 @@ package enumerator
 
 import (
 	"encoding/json"
+	"strings"
+	"sync"
 
+	"github.com/HUSTSecLab/OpenSift/pkg/linkenumerator/api"
+	"github.com/HUSTSecLab/OpenSift/pkg/linkenumerator/api/npm"
 	"github.com/HUSTSecLab/OpenSift/pkg/logger"
 )
 
-type npmEnumerator struct {
+type NpmEnumerator struct {
 	enumeratorBase
+	take int
 }
 
-// Enumerate implements Enumerator.
-func (n *npmEnumerator) Enumerate() error {
-	req := n.client.R()
-	req.SetURL("https://github.com/nice-registry/all-the-package-repos/raw/refs/heads/master/data/packages.json")
+func NewNpmEnumerator(take int) *NpmEnumerator {
+	return &NpmEnumerator{
+		enumeratorBase: newEnumeratorBase(),
+		take:           take,
+	}
+}
 
-	logger.Info("Downloading npm data...")
+func (c *NpmEnumerator) Enumerate() error {
+	if err := c.writer.Open(); err != nil {
+		logger.Error("Open writer: ", err)
+		return err
+	}
+	defer c.writer.Close()
+
+	req := c.client.R()
+	req.SetURL(api.NPM_INDEX_API_URL)
+	logger.Info("Downloading npm package name list...")
 	resp := req.Do()
 	if resp.IsErrorState() {
+		logger.Error("NPM fetch error: ", resp.Err)
 		return resp.Err
 	}
 
-	logger.Info("Parsing npm data...")
-
 	var data map[string]*string
-	err := json.Unmarshal(resp.Bytes(), &data)
-
-	if err != nil {
+	if err := json.Unmarshal(resp.Bytes(), &data); err != nil {
 		logger.Error("Failed to parse npm data: ", err)
 		return err
 	}
 
-	// remove duplicates
-	distinctDataMap := make(map[string]struct{})
-	for _, v := range data {
-		if v == nil {
-			continue
-		}
-		distinctDataMap[*v] = struct{}{}
+	names := make([]string, 0, len(data))
+	for name := range data {
+		names = append(names, name)
 	}
-	// convert map to list
-	var distinctData []string
-	for k := range distinctDataMap {
-		distinctData = append(distinctData, k)
+	if c.take > 0 && c.take < len(names) {
+		names = names[:c.take]
 	}
 
-	n.writer.Open()
-	defer n.writer.Close()
-	for _, v := range distinctData {
-		n.writer.Write(v)
+	maxConcurrency := 10
+	sem := make(chan struct{}, maxConcurrency)
+	var wg sync.WaitGroup
+
+	for _, name := range names {
+		sem <- struct{}{}
+		wg.Add(1)
+		go func(pkgName string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			res, err := c.fetch(api.NPM_ENUMERATE_API_URL + pkgName)
+			if err != nil {
+				logger.Error("Fetch npm package failed: ", pkgName, err)
+				return
+			}
+			npmResp, err := api.FromNpm(res)
+			if err != nil {
+				logger.Error("Parse npm package failed: ", pkgName, err)
+				return
+			}
+			latest := npmResp.DistTags["latest"]
+			versionInfo, ok := npmResp.Versions[latest]
+			if !ok {
+				versionInfo = npm.NpmVersion{}
+			}
+			c.writer.Write(npmResp.Name)
+			c.writer.Write(versionInfo.Homepage)
+			c.writer.Write(versionInfo.Repository.URL)
+			deps := make([]string, 0, len(versionInfo.Dependencies))
+			for dep := range versionInfo.Dependencies {
+				deps = append(deps, dep)
+			}
+			c.writer.Write(strings.Join(deps, ", "))
+			c.writer.Write("\n")
+		}(name)
 	}
+	wg.Wait()
 	return nil
-}
-
-var _ Enumerator = &npmEnumerator{}
-
-func NewNpmEnumerator() Enumerator {
-	return &npmEnumerator{
-		enumeratorBase: newEnumeratorBase(),
-	}
 }

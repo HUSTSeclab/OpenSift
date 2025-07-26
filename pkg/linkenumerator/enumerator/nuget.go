@@ -2,49 +2,63 @@ package enumerator
 
 import (
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/HUSTSecLab/OpenSift/pkg/linkenumerator/api"
 	"github.com/HUSTSecLab/OpenSift/pkg/linkenumerator/api/nuget"
-	"github.com/HUSTSecLab/OpenSift/pkg/logger"
-	"github.com/bytedance/gopkg/util/gopool"
+	"github.com/sirupsen/logrus"
 )
 
-// Todo Use channel to receive and write data
-func (c *enumeratorBase) EnumerateNuget() {
-	api_url := api.NUGET_INDEX_URL
-	var wg sync.WaitGroup
-	ch := make(chan []nuget.Datum)
-	pkgs := []nuget.Datum{}
-	// ToDo Set Wait Group
-	wg.Add(1)
-	gopool.Go(func() {
-		defer wg.Done()
-		for pkg := range ch {
-			pkgs = append(pkgs, pkg...)
-		}
-	})
-	for page := 1; page <= 1; page++ {
-		time.Sleep(api.TIME_INTERVAL * time.Second)
-		gopool.Go(func() {
-			defer wg.Done()
-			u := fmt.Sprintf(
-				"%s?%s=%d&%s=%d",
-				api_url,
-				"take", api.PER_PAGE,
-				"skip", page*api.PER_PAGE,
-			)
-			res, err := c.fetch(u)
-			if err != nil {
-				logger.Panic("NuGet", err)
-			}
-			resp := nuget.Response{}
-			if err = res.UnmarshalJson(&resp); err != nil {
-				logger.Panic("NuGet", err)
-			}
-			ch <- resp.Data
-		})
+type NugetEnumerator struct {
+	enumeratorBase
+	take int
+}
+
+func NewNugetEnumerator(take int) *NugetEnumerator {
+	return &NugetEnumerator{
+		enumeratorBase: newEnumeratorBase(),
+		take:           take,
 	}
-	wg.Wait()
+}
+
+func (c *NugetEnumerator) Enumerate() error {
+	err := c.writer.Open()
+	defer c.writer.Close()
+	if err != nil {
+		logrus.Panic("Open writer", err)
+	}
+
+	u := api.NUGET_INDEX_URL
+	collected := 0
+	page := 0
+
+	for {
+		time.Sleep(time.Second * api.TIME_INTERVAL)
+		page++
+		url := fmt.Sprintf("%s?take=%d&skip=%d", u, api.PER_PAGE, (page-1)*api.PER_PAGE)
+		res, err := c.fetch(url)
+		if err != nil {
+			logrus.Panic("NuGet fetch error", err)
+		}
+		resp := nuget.Response{}
+		if err = res.UnmarshalJson(&resp); err != nil {
+			logrus.Panic("NuGet unmarshal error", err)
+		}
+
+		for _, pkg := range resp.Data {
+			c.writer.Write(pkg.Title)
+			c.writer.Write(pkg.Version)
+			c.writer.Write(pkg.ProjectURL)
+			c.writer.Write(fmt.Sprintf("%d", pkg.TotalDownloads))
+			c.writer.Write("\n")
+		}
+
+		collected += len(resp.Data)
+
+		if collected >= c.take || len(resp.Data) == 0 {
+			break
+		}
+	}
+	logrus.Infof("Enumerator has collected and written %d packages", collected)
+	return nil
 }

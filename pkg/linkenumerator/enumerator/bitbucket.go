@@ -71,35 +71,3 @@ func (c *BitBucketEnumerator) Enumerate() error {
 	}
 	return nil
 }
-
-// TODO: implement the following functions
-
-// // ToDo
-// func (c *Enumerator) enumeratePyPI() {
-
-// }
-
-// // ToDo
-// func (c *Enumerator) enumerateNPM() {
-
-// }
-
-// // ToDo
-// func (c *Enumerator) enumerateGo() {
-
-// }
-
-// // ToDo
-// func (c *Enumerator) enumeratePHP() {
-
-// }
-
-// // ToDo
-// func (c *Enumerator) enumerateHaskell() {
-
-// }
-
-// // ToDo
-// func (c *Enumerator) enumerateRubyGems() {
-
-// }
